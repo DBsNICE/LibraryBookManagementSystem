@@ -44,7 +44,14 @@ void swapMemberData(Member* a, Member* b);
 Book* copyBookList();
 void sortBooksByBorrowCount(Book *head);
 void swapBookData(Book* a, Book* b);
+void logAction(const char* action);
+void freeBookList(Book* head);
+void freeMemberList(Member* head);
 
+char line[10];
+const char* adminusername = "admin";
+const char* adminpassword = "admin123";
+int nextBookID = 1000;
 
 Book* copyBookList() {
     Book* head = NULL, *tail = NULL;
@@ -89,7 +96,6 @@ void swapBookData(Book* a, Book* b) {
     b->borrowCount = borrowCount;
 }
 
-// File persistence
 void saveBooksToFile() {
     FILE* fp = fopen("books.txt", "w");
     for (Book* b = bookHead; b != NULL; b = b->next) {
@@ -116,7 +122,7 @@ void loadBooksFromFile() {
 void saveMembersToFile() {
     FILE* fp = fopen("members.txt", "w");
     for (Member* m = memberHead; m != NULL; m = m->next) {
-        fprintf(fp, "%d\n%s\n%.2f\n", m->id, m->name, m->fine);
+        fprintf(fp, "%d\n%s\n%.2f\n%d\n", m->id, m->name, m->fine, m->borrowHistoryCount);
     }
     fclose(fp);
 }
@@ -124,16 +130,38 @@ void saveMembersToFile() {
 void loadMembersFromFile() {
     FILE* fp = fopen("members.txt", "r");
     if (!fp) return;
-    while (!feof(fp)) {
+
+    while (1) {
         Member* m = malloc(sizeof(Member));
-        if (fscanf(fp, "%d\n%[^\n]\n%f\n", &m->id, m->name, &m->fine) == 3) {
-            m->next = memberHead;
-            memberHead = m;
-        } else {
+        if (!m) break;
+        if (fscanf(fp, "%d\n%[^\n]\n%f\n%d\n", &m->id, m->name, &m->fine, &m->borrowHistoryCount) != 4){
+        if (fscanf(fp, "%d\n%[^\n]\n%f\n", &m->id, m->name, &m->fine) != 3) {
             free(m);
+            break;  
         }
+
+        m->borrowHistoryCount = 0;
+        m->next = memberHead;
+        memberHead = m;
+    }
     }
     fclose(fp);
+}
+
+void saveNextBookID() {
+    FILE* fp = fopen("bookid.txt", "w");
+    if (fp) {
+        fprintf(fp, "%d", nextBookID);
+        fclose(fp);
+    }
+}
+
+void loadNextBookID() {
+    FILE* fp = fopen("bookid.txt", "r");
+    if (fp) {
+        fscanf(fp, "%d", &nextBookID);
+        fclose(fp);
+    }
 }
 
 void generateMostActiveMembersReport() {
@@ -158,7 +186,6 @@ void sortMembersByBorrowCount(Member *head) {
         }
     }
 }
-
 
 Book* findBookById(int id) {
     Book* temp = bookHead;
@@ -253,22 +280,20 @@ void returnBook() {
 }
 
 void addBook() {
-    Book* newBook = malloc(sizeof(Book));
-    printf("Enter Book ID: ");
-    scanf("%d", &newBook->id);
-    printf("Enter ISBN: ");
-    scanf(" %[^\n]", newBook->isbn);
-    printf("Enter Title: ");
+    Book* newBook = (Book*)malloc(sizeof(Book));
+    newBook->id = nextBookID++;  // Auto-increment ID
+    printf("Enter book title: ");
     scanf(" %[^\n]", newBook->title);
-    printf("Enter Author: ");
+    printf("Enter author: ");
     scanf(" %[^\n]", newBook->author);
-    printf("Enter Genre: ");
-    scanf(" %[^\n]", newBook->genre);
-    newBook->isBorrowed = 0;
+    newBook->isBorrowed = 1;
+    newBook->borrowCount = 0;
+
+    // Insert into list
     newBook->next = bookHead;
     bookHead = newBook;
-    saveBooksToFile();
-    printf("Book added successfully!\n");
+
+    printf("Book added with ID: %d\n", newBook->id);
 }
 
 void editBook() {
@@ -310,51 +335,128 @@ void deleteBook() {
 }
 
 void viewBooks() {
+        // Count books
+    int count = 0;
     Book* temp = bookHead;
     while (temp) {
-        printf("ID: %d | Title: %s | Author: %s | Genre: %s | Status: %s\n",
-               temp->id, temp->title, temp->author, temp->genre,
-               temp->isBorrowed ? "Borrowed" : "Available");
+        count++;
         temp = temp->next;
     }
-}
 
-void sortBooksByTitle() {
-    if (!bookHead || !bookHead->next) return;
-    Book *i, *j;
-    for (i = bookHead; i != NULL; i = i->next) {
-        for (j = i->next; j != NULL; j = j->next) {
-            if (strcmp(i->title, j->title) > 0) {
-                char tempTitle[100], tempAuthor[100], tempGenre[50];
-                int tempId = i->id, tempBorrow = i->isBorrowed;
-                strcpy(tempTitle, i->title); strcpy(tempAuthor, i->author); strcpy(tempGenre, i->genre);
-                i->id = j->id; i->isBorrowed = j->isBorrowed;
-                strcpy(i->title, j->title); strcpy(i->author, j->author); strcpy(i->genre, j->genre);
-                j->id = tempId; j->isBorrowed = tempBorrow;
-                strcpy(j->title, tempTitle); strcpy(j->author, tempAuthor); strcpy(j->genre, tempGenre);
+    // Copy to array
+    Book** bookArray = malloc(sizeof(Book*) * count);
+    temp = bookHead;
+    for (int i = 0; i < count; i++) {
+        bookArray[i] = temp;
+        temp = temp->next;
+    }
+
+    // Sort by ID
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (bookArray[i]->id > bookArray[j]->id) {
+                Book* tmp = bookArray[i];
+                bookArray[i] = bookArray[j];
+                bookArray[j] = tmp;
             }
         }
     }
-    printf("Books sorted by title.\n");
+
+    // Display
+    for (int i = 0; i < count; i++) {
+    printf("ID: %d, Title: %s, Author: %s, Genre: %s, Available: %s\n",
+        bookArray[i]->id,
+        bookArray[i]->title,
+        bookArray[i]->author,
+        bookArray[i]->genre,
+        bookArray[i]->isBorrowed ? "Yes" : "No");
+}
+
+free(bookArray);
 }
 
 Book* binarySearchBook(const char* title) {
     Book* books[100];
     int count = 0;
     Book* temp = bookHead;
-    while (temp) {
+
+  
+    while (temp && count < 100) {
         books[count++] = temp;
         temp = temp->next;
     }
+
+    // Sort the array by title 
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (strcasecmp(books[i]->title, books[j]->title) > 0) {
+                Book* tmp = books[i];
+                books[i] = books[j];
+                books[j] = tmp;
+            }
+        }
+    }
+
+    // Binary search
     int low = 0, high = count - 1;
     while (low <= high) {
         int mid = (low + high) / 2;
-        int cmp = strcmp(books[mid]->title, title);
+        int cmp = strcasecmp(books[mid]->title, title); 
         if (cmp == 0) return books[mid];
         else if (cmp < 0) low = mid + 1;
         else high = mid - 1;
     }
     return NULL;
+}
+
+void searchBook() {
+    int choice, id;
+    char input[100];
+    printf("\nSearch Book By:\n1. ID\n2. Title\n3. Author\nChoice: ");
+    scanf("%d", &choice);
+    getchar();  // newline flush 
+    switch (choice) {
+        case 1:
+            printf("Enter Book ID: ");
+            scanf("%d", &id);
+            Book* book = findBookById(id);
+            if (book) {
+                printf("Book Found: ID: %d, Title: %s, Author: %s, Genre: %s\n", 
+                       book->id, book->title, book->author, book->genre);
+            } else {
+                printf("Book with ID %d not found.\n", id);
+            }
+            break;
+        case 2:
+            printf("Enter Book Title: ");
+            scanf(" %[^\n]", input);  // Read full title with spaces
+            book = binarySearchBook(input);  // Binary search for title
+            if (book) {
+                printf("Book Found: ID: %d, Title: %s, Author: %s, Genre: %s\n", 
+                       book->id, book->title, book->author, book->genre);
+            } else {
+                printf("Book with title \"%s\" not found.\n", input);
+            }
+            break;
+        case 3:
+            printf("Enter Author Name: ");
+            scanf(" %[^\n]", input);  // Read full author name with spaces
+            int found = 0;
+            for (book = bookHead; book != NULL; book = book->next) {
+                if (strstr(book->author, input)) {  // Search by author name
+                    printf("Book Found: ID: %d, Title: %s, Author: %s, Genre: %s\n", 
+                           book->id, book->title, book->author, book->genre);
+                    found = 1;
+                }
+            }
+            if (!found) {
+                printf("No books found by author \"%s\".\n", input);
+            }
+            break;
+        default:
+            printf("Invalid choice.\n");
+            break;
+    }
 }
 
 void registerMember() {
@@ -402,6 +504,21 @@ void deleteMember() {
         ptr = &(*ptr)->next;
     }
     printf("Member not found.\n");
+}
+
+void memberlist() {
+    if (!memberHead) {
+        printf("No members registered.\n");
+        return;  
+    }
+
+    printf("\n--- Member List ---\n");
+    Member* temp = memberHead;
+    while (temp) {
+        printf("ID: %d | Name: %s | Fine: $%.2f | Borrows: %d\n", 
+               temp->id, temp->name, temp->fine, temp->borrowHistoryCount);
+        temp = temp->next;
+    }
 }
 
 void borrowBook() {
@@ -469,24 +586,6 @@ Member* copyMemberList() {
     return head;
 }
 
-void searchBook() {
-    char title[100];
-    printf("Enter title to search: ");
-    scanf(" %[^\n]", title);
-    
-    sortBooksByTitle();  // Ensure the list is sorted before binary search
-    
-    Book* found = binarySearchBook(title);
-    if (found) {
-        printf("Book Found:\n");
-        printf("ID: %d | Title: %s | Author: %s | Genre: %s | Status: %s\n",
-               found->id, found->title, found->author, found->genre,
-               found->isBorrowed ? "Borrowed" : "Available");
-    } else {
-        printf("Book with title '%s' not found.\n", title);
-    }
-}
-
 void generateTopBorrowedBooksReport() {
     Book *sortedBooks = copyBookList();
     sortBooksByBorrowCount(sortedBooks);
@@ -510,27 +609,98 @@ void sortBooksByBorrowCount(Book *head) {
     }
 }
 
+void logAction(const char* action) {
+    FILE* logFile = fopen("log.csv", "a");
+    if (logFile) {
+        time_t now = time(NULL);
+        char* timeStr = ctime(&now);
+        timeStr[strcspn(timeStr, "\n")] = '\0'; 
+        fprintf(logFile, "%s,%s\n", timeStr, action);
+        fclose(logFile);
+    }
+}
+
+int adminlogin() {
+    char username[50];
+    char password[50];
+    printf("=== Admin Login ===\n");
+    printf("Username: ");
+    scanf(" %s", username);
+    printf("Password: ");
+    scanf(" %s", password);
+
+    if (strcmp(username, adminusername) == 0 && strcmp(password, adminpassword) == 0) {
+        printf("Login successful Welcome Admin!\n");
+        return 1;
+    } else {
+        printf("Login failed. Invalid username or password.\n");
+        return 0;
+    }
+}
+
+Member* memberIDlogin() {
+    int id;
+    printf("Enter your Member ID: ");
+    scanf("%d", &id);
+
+    Member* current = memberHead;
+    while (current != NULL) {
+        if (current->id == id) {
+            printf("Welcome, %s!\n", current->name);
+            return current;
+        }
+        current = current->next;
+    }
+
+    printf("Member ID not found.\n");
+    return NULL;
+}
+
 void adminMenu() {
     int choice;
     do {
         printf("\n--- Admin Panel ---\n");
-        printf("1. Add Book\n2. Edit Book\n3. Delete Book\n4. View Books\n5. Sort Books\n6. Process Borrow Requests\n7. Edit Member\n8. Delete Member\n0. Back\n");
+        printf("1. Add Book\n2. Edit Book\n3. Delete Book\n4. View Books\n5. Search Books\n6. Process Borrow Requests\n7. RegisterMember\n8. MemberList\n9. Edit Member\n10. Delete Member\n0. Back\n");
         printf("Enter choice: ");
         scanf("%d", &choice);
         switch (choice) {
             case 1: addBook(); break;
-            case 2: editBook(); break;
-            case 3: deleteBook(); break;
+            case 2: {
+            viewBooks();
+            editBook(); 
+            break;
+            }
+            case 3: {
+            viewBooks();
+            deleteBook(); 
+            break;
+            }
             case 4: viewBooks(); break;
-            case 5: sortBooksByTitle(); break;
+            case 5: searchBook(); break; 
             case 6: processBorrowRequests(); break;
-            case 7: editMember(); break;
-            case 8: deleteMember(); break;
+            case 7: {
+            registerMember();
+            break;
+            }
+            case 8: {
+            memberlist();
+            editMember(); 
+            break;
+            }
+            case 9: {
+            memberlist();
+            deleteMember(); 
+            break;
+            }
         }
     } while (choice != 0);
 }
 
 void memberMenu() {
+    Member* member = memberIDlogin();
+if (member == NULL) {
+    return; 
+}
     int choice;
     do {
         printf("\n--- Member Panel ---\n");
@@ -539,7 +709,11 @@ void memberMenu() {
         scanf("%d", &choice);
         switch (choice) {
             case 1: registerMember(); break;
-            case 2: borrowBook(); break;
+            case 2: {
+                viewBooks();
+                borrowBook(); 
+                break;
+            }
             case 3: returnBook(); break;
             case 4: payFine(); break;
             case 5: searchBook(); break;
@@ -548,20 +722,36 @@ void memberMenu() {
 }
 
 int main() {
-    srand(time(NULL));
     loadBooksFromFile();
     loadMembersFromFile();
-    int choice;
-    do {
+    loadNextBookID();
+    char input[10];
+    int choice = -1;
+
+    while (1) {
         printf("\nLibrary System\n");
-        printf("1. Admin\n2. Member\n0. Exit\n");
-        printf("Enter choice: ");
-        scanf("%d", &choice);
+        printf("1. Admin\n2. Member\n0. Exit\nEnter choice: ");
+
+        scanf(" %10s", input);
+        choice = atoi(input); //converts a string to number int
+
+
         switch (choice) {
-            case 1: adminMenu(); break;
-            case 2: memberMenu(); break;
+            case 1: {
+                adminlogin();
+                adminMenu();
+                break;
+            }
+            case 2: 
+                memberMenu();
+                break;
+            case 0:
+                return 1;
+            default:
+                printf("Invalid Input.\n");
+                break;
         }
-    } while (choice != 0);
+    }
 
     return 0;
 }

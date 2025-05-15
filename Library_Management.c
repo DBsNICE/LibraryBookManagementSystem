@@ -11,6 +11,7 @@ typedef struct Book {
     char genre[50];
     int isBorrowed;
     int borrowCount;
+    char borrowDate[11]; //"YYYY-MM-DD"
     char isbn[20];
     struct Book* next;
 } Book;
@@ -96,60 +97,67 @@ void swapBookData(Book* a, Book* b) {
     b->borrowCount = borrowCount;
 }
 
-void saveBooksToFile() {
-    FILE* fp = fopen("books.txt", "w");
+void savebook() {
+    FILE* fp = fopen("books.csv", "w");
     for (Book* b = bookHead; b != NULL; b = b->next) {
-        fprintf(fp, "%d\n%s\n%s\n%s\n%d\n", b->id, b->title, b->author, b->genre, b->isBorrowed);
+        fprintf(fp, "%d\n%s\n%s\n%s\n%d\n", b->id, b->title, b->author, b->genre, b->isBorrowed, b->isbn, b->borrowDate);
     }
     fclose(fp);
 }
 
-void loadBooksFromFile() {
-    FILE* fp = fopen("books.txt", "r");
+void loadbook() {
+    FILE* fp = fopen("books.csv", "r");
     if (!fp) return;
-    while (!feof(fp)) {
+
+    while (1) {
         Book* b = malloc(sizeof(Book));
-        if (fscanf(fp, "%d\n%[^\n]\n%[^\n]\n%[^\n]\n%d\n", &b->id, b->title, b->author, b->genre, &b->isBorrowed) == 5) {
+        if (!b) break;
+
+        int result = fscanf(fp, "%d\n%[^\n]\n%[^\n]\n%[^\n]\n%d\n%[^\n]\n%[^\n]\n",&b->id, b->title, b->author, b->genre, &b->isBorrowed, b->borrowDate, b->isbn);
+        if (result == 7) { //load succesfully
             b->next = bookHead;
             bookHead = b;
         } else {
             free(b);
+            break;
         }
     }
+
     fclose(fp);
 }
 
 void saveMembersToFile() {
-    FILE* fp = fopen("members.txt", "w");
+    FILE* fp = fopen("members.csv", "w");
     for (Member* m = memberHead; m != NULL; m = m->next) {
         fprintf(fp, "%d\n%s\n%.2f\n%d\n", m->id, m->name, m->fine, m->borrowHistoryCount);
     }
     fclose(fp);
 }
 
-void loadMembersFromFile() {
-    FILE* fp = fopen("members.txt", "r");
+void loadmember() {
+    FILE* fp = fopen("members.csv", "r");
     if (!fp) return;
 
     while (1) {
         Member* m = malloc(sizeof(Member));
         if (!m) break;
-        if (fscanf(fp, "%d\n%[^\n]\n%f\n%d\n", &m->id, m->name, &m->fine, &m->borrowHistoryCount) != 4){
-        if (fscanf(fp, "%d\n%[^\n]\n%f\n", &m->id, m->name, &m->fine) != 3) {
-            free(m);
-            break;  
-        }
 
-        m->borrowHistoryCount = 0;
-        m->next = memberHead;
-        memberHead = m;
+        int result = fscanf(fp, "%d\n%[^\n]\n%f\n%d\n", &m->id, m->name, &m->fine, &m->borrowHistoryCount);
+        if (result == 4 || result == 3) {
+            if (result == 3) m->borrowHistoryCount = 0;
+            m->next = memberHead;
+            memberHead = m;
+        } else {
+            free(m);
+            break;
+        }
     }
-    }
+
     fclose(fp);
 }
 
 void saveNextBookID() {
-    FILE* fp = fopen("bookid.txt", "w");
+    FILE* fp = fopen("bookid.csv", "w");
     if (fp) {
         fprintf(fp, "%d", nextBookID);
         fclose(fp);
@@ -157,14 +165,14 @@ void saveNextBookID() {
 }
 
 void loadNextBookID() {
-    FILE* fp = fopen("bookid.txt", "r");
+    FILE* fp = fopen("bookid.csv", "r");
     if (fp) {
         fscanf(fp, "%d", &nextBookID);
         fclose(fp);
     }
 }
 
-void generateMostActiveMembersReport() {
+void TopMember() {
     Member *sortedMembers = copyMemberList();
     sortMembersByBorrowCount(sortedMembers);
 
@@ -233,10 +241,11 @@ int isQueueEmpty() {
 }
 
 void processBorrowRequests() {
-   
     while (front != NULL) {
         BorrowRequest* req = front;
         Book* book = findBookById(req->bookId);
+        time_t now = time(NULL);
+        strftime(book->borrowDate, sizeof(book->borrowDate), "%Y-%m-%d", localtime(&now));
         Member* member = findMemberById(req->memberId);
         if (book && member && book->isBorrowed == 0) {
             book->isBorrowed = 1;
@@ -250,10 +259,22 @@ void processBorrowRequests() {
         free(req);
     }
     rear = NULL;
-    saveBooksToFile();
+    savebook();
 }
 
-void returnBook() {
+int calculateOverdueDays(const char* borrowDateStr, int allowedDays) {
+    struct tm borrowDate = {0};
+    sscanf(borrowDateStr, "%d-%d-%d", &borrowDate.tm_year, &borrowDate.tm_mon, &borrowDate.tm_mday);
+    borrowDate.tm_year -= 1900;
+    borrowDate.tm_mon -= 1;
+    time_t borrowTime = mktime(&borrowDate);
+    time_t now = time(NULL);
+    double seconds = difftime(now, borrowTime);
+    int days = (int)(seconds / (60 * 60 * 24));
+    return days > allowedDays ? (days - allowedDays) : 0;
+}
+
+void returnbook() {
     int bookId, memberId;
     printf("Enter Book ID to return: ");
     scanf("%d", &bookId);
@@ -264,29 +285,35 @@ void returnBook() {
 
     if (book && member && book->isBorrowed) {
         book->isBorrowed = 0;
-        int overdueDays = rand() % 10;
-        if (overdueDays > 5) {
-            float fine = (overdueDays - 5) * 1.0f;
-            member->fine += fine;
-            printf("Book returned late. Fine added: $%.2f\n", fine);
+        int overdueDays = calculateOverdueDays(book->borrowDate, 5); // 7-day borrow period
+        if (overdueDays > 0) {
+        float fine = overdueDays * 5.0f;
+        member->fine += fine;
+        printf("Book returned %d days late. Fine: $%.2f\n", overdueDays, fine);
+            
         } else {
             printf("Book returned on time.\n");
         }
-        saveBooksToFile();
+        savebook();
         saveMembersToFile();
     } else {
         printf("Return failed. Book may not be borrowed or IDs invalid.\n");
     }
+    logAction("BookReturned");
 }
 
-void addBook() {
+void addbook() {
     Book* newBook = (Book*)malloc(sizeof(Book));
-    newBook->id = nextBookID++;  // Auto-increment ID
+    newBook->id = nextBookID++; 
     printf("Enter book title: ");
     scanf(" %[^\n]", newBook->title);
     printf("Enter author: ");
     scanf(" %[^\n]", newBook->author);
-    newBook->isBorrowed = 1;
+    printf("Enter ISBN: ");
+    scanf(" %[^\n]", newBook->isbn);
+    printf("Enter genre: ");
+    scanf(" %[^\n]", newBook->genre);
+    newBook->isBorrowed = 0;
     newBook->borrowCount = 0;
 
     // Insert into list
@@ -294,6 +321,7 @@ void addBook() {
     bookHead = newBook;
 
     printf("Book added with ID: %d\n", newBook->id);
+    logAction("Bookadded");
 }
 
 void editBook() {
@@ -306,13 +334,16 @@ void editBook() {
         scanf(" %[^\n]", book->title);
         printf("Enter new author: ");
         scanf(" %[^\n]", book->author);
+        printf("Enter new ISBN: ");
+        scanf(" %[^\n]", book->isbn);
         printf("Enter new genre: ");
         scanf(" %[^\n]", book->genre);
-        saveBooksToFile();
+        savebook();
         printf("Book updated.\n");
     } else {
         printf("Book not found.\n");
     }
+    logAction("bookedited");
 }
 
 void deleteBook() {
@@ -325,17 +356,17 @@ void deleteBook() {
             Book* tmp = *ptr;
             *ptr = (*ptr)->next;
             free(tmp);
-            saveBooksToFile();
+            savebook();
             printf("Book deleted.\n");
             return;
         }
         ptr = &(*ptr)->next;
     }
     printf("Book not found.\n");
+    logAction("BookDeleted");
 }
 
 void viewBooks() {
-        // Count books
     int count = 0;
     Book* temp = bookHead;
     while (temp) {
@@ -343,16 +374,14 @@ void viewBooks() {
         temp = temp->next;
     }
 
-    // Copy to array
-    Book** bookArray = malloc(sizeof(Book*) * count);
+    Book** bookArray = malloc(sizeof(Book*) * count);// Copy to array
     temp = bookHead;
     for (int i = 0; i < count; i++) {
         bookArray[i] = temp;
         temp = temp->next;
     }
 
-    // Sort by ID
-    for (int i = 0; i < count - 1; i++) {
+    for (int i = 0; i < count - 1; i++) {// Sort by ID
         for (int j = i + 1; j < count; j++) {
             if (bookArray[i]->id > bookArray[j]->id) {
                 Book* tmp = bookArray[i];
@@ -470,6 +499,7 @@ void registerMember() {
     memberHead = newMem;
     saveMembersToFile();
     printf("Member registered!\n");
+    logAction("MemberRegistered");
 }
 
 void editMember() {
@@ -485,6 +515,7 @@ void editMember() {
     } else {
         printf("Member not found.\n");
     }
+    logAction("MemberEdit");
 }
 
 void deleteMember() {
@@ -504,6 +535,7 @@ void deleteMember() {
         ptr = &(*ptr)->next;
     }
     printf("Member not found.\n");
+    logAction("MemberDeleted");
 }
 
 void memberlist() {
@@ -535,6 +567,7 @@ void borrowBook() {
     }
     enqueue(memberId, bookId, book->isbn);// Pass ISBN properly
     printf("Borrow request enqueued.\n");
+    logAction("BookBorrowed");
 }
 
 void payFine() {
@@ -586,7 +619,7 @@ Member* copyMemberList() {
     return head;
 }
 
-void generateTopBorrowedBooksReport() {
+void PopularBook() {
     Book *sortedBooks = copyBookList();
     sortBooksByBorrowCount(sortedBooks);
 
@@ -656,15 +689,31 @@ Member* memberIDlogin() {
     return NULL;
 }
 
+void freeBookList(Book* head) {
+    while (head) {
+        Book* tmp = head;
+        head = head->next;
+        free(tmp);
+    }
+}
+
+void freeMemberList(Member* head) {
+    while (head) {
+        Member* tmp = head;
+        head = head->next;
+        free(tmp);
+    }
+}
+
 void adminMenu() {
     int choice;
     do {
         printf("\n--- Admin Panel ---\n");
-        printf("1. Add Book\n2. Edit Book\n3. Delete Book\n4. View Books\n5. Search Books\n6. Process Borrow Requests\n7. RegisterMember\n8. MemberList\n9. Edit Member\n10. Delete Member\n0. Back\n");
+        printf("1. Add Book\n2. Edit Book\n3. Delete Book\n4. View Books\n5. Search Books\n6. Process Borrow Requests\n7. RegisterMember\n8. MemberList\n9. Edit Member\n10. Delete Member\n11. MostActiveMember\n0. Back\n");
         printf("Enter choice: ");
         scanf("%d", &choice);
         switch (choice) {
-            case 1: addBook(); break;
+            case 1: addbook(); break;
             case 2: {
             viewBooks();
             editBook(); 
@@ -675,7 +724,11 @@ void adminMenu() {
             deleteBook(); 
             break;
             }
-            case 4: viewBooks(); break;
+            case 4: {
+            PopularBook();
+            viewBooks(); 
+            break;
+            }
             case 5: searchBook(); break; 
             case 6: processBorrowRequests(); break;
             case 7: {
@@ -684,14 +737,19 @@ void adminMenu() {
             }
             case 8: {
             memberlist();
-            editMember(); 
             break;
             }
             case 9: {
             memberlist();
+            editBook(); 
+            break;
+            }
+            case 10: {
+            memberlist();
             deleteMember(); 
             break;
             }
+            case 11: TopMember(); break;
         }
     } while (choice != 0);
 }
@@ -710,11 +768,12 @@ if (member == NULL) {
         switch (choice) {
             case 1: registerMember(); break;
             case 2: {
+                PopularBook();
                 viewBooks();
                 borrowBook(); 
                 break;
             }
-            case 3: returnBook(); break;
+            case 3: returnbook(); break;
             case 4: payFine(); break;
             case 5: searchBook(); break;
         }
@@ -722,8 +781,8 @@ if (member == NULL) {
 }
 
 int main() {
-    loadBooksFromFile();
-    loadMembersFromFile();
+    loadbook();
+    loadmember();
     loadNextBookID();
     char input[10];
     int choice = -1;
@@ -746,6 +805,8 @@ int main() {
                 memberMenu();
                 break;
             case 0:
+            freeBookList(bookHead);
+            freeMemberList(memberHead);
                 return 1;
             default:
                 printf("Invalid Input.\n");
